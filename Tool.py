@@ -1,6 +1,7 @@
 import requests
 import urllib.parse
 import re
+import os  # Added to handle file operations
 from enum import Enum
 from dataclasses import dataclass
 from typing import List, Dict, Optional
@@ -32,47 +33,96 @@ class PayloadGenerator:
     
     def __init__(self):
         # A unique token to verify reflection without triggering alerts during initial probing
-        self.probe_token = "XSSPROBE" + str(12345) 
+        self.probe_token = "XSSPROBE" + str(12345)
+        self.payload_file = "xss-payload-list.txt"
+        self.custom_payloads = self._load_custom_payloads()
+
+    def _load_custom_payloads(self) -> Dict[InjectionContext, List[str]]:
+        """
+        Loads payloads from the external file if it exists and categorizes them.
+        """
+        categorized = {
+            InjectionContext.TEXT_NODE: [],
+            InjectionContext.ATTRIBUTE_VALUE: [],
+            InjectionContext.ATTRIBUTE_NAME: [],
+            InjectionContext.SCRIPT_TAG: []
+        }
+
+        if not os.path.exists(self.payload_file):
+            print(f"[!] Info: Payload file '{self.payload_file}' not found. Using defaults only.")
+            return categorized
+
+        print(f"[*] Loading payloads from {self.payload_file}...")
+        try:
+            with open(self.payload_file, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+
+                    # --- Heuristics for Categorization ---
+                    # 1. Tags (Text Node)
+                    if line.startswith('<'):
+                        categorized[InjectionContext.TEXT_NODE].append(line)
+                    
+                    # 2. Quote breakouts (Attribute Values)
+                    elif line.startswith('"') or line.startswith("'"):
+                        categorized[InjectionContext.ATTRIBUTE_VALUE].append(line)
+                    
+                    # 3. Attribute Names / Weird Protocol handlers / Polyglots
+                    # If it doesn't fit strictly elsewhere, we often try it in multiple spots
+                    else:
+                        # Add to Attribute Value (often works for inputs)
+                        categorized[InjectionContext.ATTRIBUTE_VALUE].append(line)
+                        # Add to Text Node (just in case it's raw text reflection)
+                        categorized[InjectionContext.TEXT_NODE].append(line)
+                        
+                        # If it looks like an event handler or attribute injection
+                        if '=' in line or 'on' in line.lower():
+                            categorized[InjectionContext.ATTRIBUTE_NAME].append(line)
+
+            count = sum(len(v) for v in categorized.values())
+            print(f"[*] Successfully loaded {count} variants from file.")
+            
+        except Exception as e:
+            print(f"[!] Error reading payload file: {e}")
+
+        return categorized
 
     def get_payloads(self, context: InjectionContext = None) -> Dict[InjectionContext, List[str]]:
         """
         Returns a dictionary of payloads keyed by context. 
         If a specific context is requested, only that list is returned.
         """
-        payloads = {}
+        # Default built-in payloads (High confidence/Low noise)
+        payloads = {
+            InjectionContext.TEXT_NODE: [
+                f"<script>console.log('{self.probe_token}')</script>",
+                f"<img src=x onerror=console.log('{self.probe_token}')>",
+                f"<!-- {self.probe_token} -->" 
+            ],
+            InjectionContext.ATTRIBUTE_VALUE: [
+                f'"{self.probe_token}',                 
+                f'"><script>console.log({self.probe_token})</script>', 
+                f'" onmouseover="console.log(\'{self.probe_token}\')', 
+                f"' onmouseover='console.log(\'{self.probe_token}\')", 
+            ],
+            InjectionContext.ATTRIBUTE_NAME: [
+                self.probe_token,                      
+                f'style=expression(console.log({self.probe_token}))', 
+                f'autofocus onfocus=console.log({self.probe_token})', 
+                f'>{self.probe_token}<'                
+            ],
+            InjectionContext.SCRIPT_TAG: [
+                f"';console.log('{self.probe_token}');//",
+                f'";console.log("{self.probe_token}");//'
+            ]
+        }
 
-        # 1. Text Node / Generic HTML Body
-        # Context: <div>[INPUT]</div>
-        # Goal: Inject a new tag.
-        text_payloads = [
-            f"<script>console.log('{self.probe_token}')</script>",
-            f"<img src=x onerror=console.log('{self.probe_token}')>",
-            f"<!-- {self.probe_token} -->" # Simple reflection check
-        ]
-        payloads[InjectionContext.TEXT_NODE] = text_payloads
-
-        # 2. Attribute Value
-        # Context: <input value="[INPUT]">
-        # Goal: Break out of the attribute quote and add an event handler or new tag.
-        attr_val_payloads = [
-            f'"{self.probe_token}',                 # Basic quote breakout check
-            f'"><script>console.log({self.probe_token})</script>', # Break out of tag
-            f'" onmouseover="console.log(\'{self.probe_token}\')', # Event handler injection
-            f"' onmouseover='console.log(\'{self.probe_token}\')", # Single quote variant
-        ]
-        payloads[InjectionContext.ATTRIBUTE_VALUE] = attr_val_payloads
-
-        # 3. Attribute Name (Required by assignment)
-        # Context: <div [INPUT]="something"> or <div [INPUT]>
-        # Goal: Inject a new attribute like onclick, or close the tag.
-        # Example from prompt: <tag testpayload=123>
-        attr_name_payloads = [
-            self.probe_token,                      # Just checking if the name reflects
-            f'style=expression(console.log({self.probe_token}))', # Legacy IE vector (good for detection)
-            f'autofocus onfocus=console.log({self.probe_token})', # Modern attribute injection
-            f'>{self.probe_token}<'                # Attempt to close the tag from the attribute name pos
-        ]
-        payloads[InjectionContext.ATTRIBUTE_NAME] = attr_name_payloads
+        # Merge Custom Payloads from File
+        for ctx, custom_list in self.custom_payloads.items():
+            if ctx in payloads:
+                # Extend the default list with custom ones
+                payloads[ctx].extend(custom_list)
 
         if context:
             return {context: payloads.get(context, [])}
@@ -102,11 +152,11 @@ class XSSScanner:
             
             # Iterate through every context type we defined
             for context, payload_list in all_payloads_map.items():
+                # Optimization: Don't spam thousands of requests if the user didn't ask for heavy scan.
+                # For this assignment, we run them all, but be aware it might take time.
+                print(f"    > Context: {context.name} ({len(payload_list)} payloads)")
+                
                 for payload in payload_list:
-                    
-                    # specific check for attribute name injection requiring unique formatting
-                    # if checking attribute name, we might want to simulate <tag PARAM=val>
-                    # For this simple scanner, we treat the payload as the raw value sent.
                     
                     # Prepare data
                     test_params = params.copy()
@@ -128,7 +178,7 @@ class XSSScanner:
                         self.results.append(result)
 
                         if reflected:
-                            print(f"    [!] REFLECTION FOUND in {context.value}: {payload}")
+                            print(f"    [!] REFLECTION FOUND in {context.value}: {payload[:50]}...")
 
                     except requests.RequestException as e:
                         print(f"    [x] Request failed: {e}")
@@ -147,7 +197,14 @@ class XSSScanner:
         In a real scanner, you would parse the HTML to see WHERE it reflected.
         For this assignment, substring match is sufficient.
         """
-        return payload in response.text
+        # Basic check: is the payload string literally in the response?
+        if payload in response.text:
+            return True
+            
+        # Advanced check (Optional): Sometimes browsers/servers URL-encode symbols.
+        # If our payload was <script>, the server might reflect %3Cscript%3E.
+        # This simple scanner might miss those if we don't decode the response or encode the check.
+        return False
 
     def generate_report(self):
         print("\n" + "="*60)
@@ -160,11 +217,13 @@ class XSSScanner:
             print("No reflections detected.")
             return
 
-        print(f"{'PARAMETER':<15} | {'CONTEXT':<15} | {'PAYLOAD':<25}")
-        print("-" * 60)
+        print(f"{'PARAMETER':<15} | {'CONTEXT':<15} | {'PAYLOAD (Truncated)':<40}")
+        print("-" * 75)
         
         for r in found_vulns:
-            print(f"{r.parameter:<15} | {r.context.value:<15} | {r.payload:<25}")
+            # Truncate payload for display
+            disp_payload = (r.payload[:37] + '...') if len(r.payload) > 37 else r.payload
+            print(f"{r.parameter:<15} | {r.context.value:<15} | {disp_payload:<40}")
         
         print("\nTotal reflections found:", len(found_vulns))
         print("="*60)
