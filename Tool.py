@@ -269,20 +269,10 @@ class XSSScanner:
         """
 
         for r in self.results:
-            # Skip non-reflected ones in main table to keep report clean? 
-            # Let's show only reflected ones or all? 
-            # Showing only reflected is usually better for reports, but listing all shows coverage.
-            # Let's show Reflected first, then maybe a summary of others. 
-            # For this assignment, let's list everything but highlight vulnerables.
-            
             status_class = "vuln-true" if r.reflected else "vuln-false"
             status_text = "REFLECTED" if r.reflected else "Blocked/Safe"
             
-            # If not reflected, we might want to hide it or make the row simpler. 
-            # Let's just include reflected ones to keep the report useful as a vulnerability report.
-            if not r.reflected:
-                continue
-
+            # Condition removed: Now showing ALL payloads regardless of result
             html_content += f"""
                     <tr>
                         <td><span class="{status_class}">{status_text}</span></td>
