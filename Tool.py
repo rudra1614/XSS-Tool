@@ -1,5 +1,7 @@
 import requests
 import time
+import datetime
+import html
 from enum import Enum
 from dataclasses import dataclass
 from typing import List, Dict, Optional
@@ -19,6 +21,18 @@ class InjectionContext(Enum):
     ATTRIBUTE_NAME = "attr_name"      # <div PAYLOAD="x"> or <div PAYLOAD>
     SCRIPT_TAG = "script_tag"         # <script>var x = 'PAYLOAD';</script>
 
+    def description(self):
+        """Returns the 'Thought Process' behind this injection context."""
+        if self == InjectionContext.TEXT_NODE:
+            return "Standard HTML Injection: Attempts to insert new HTML tags directly into the page content."
+        elif self == InjectionContext.ATTRIBUTE_VALUE:
+            return "Attribute Breakout: Attempts to close an existing attribute quote to inject a new event handler."
+        elif self == InjectionContext.ATTRIBUTE_NAME:
+            return "Attribute Injection: Attempts to inject a new attribute (e.g., onmouseover) directly into an existing tag."
+        elif self == InjectionContext.SCRIPT_TAG:
+            return "JS Context Escape: Attempts to break out of a JavaScript string or statement to execute arbitrary code."
+        return "General Injection"
+
 @dataclass
 class ScanResult:
     url: str
@@ -28,6 +42,11 @@ class ScanResult:
     payload: str
     reflected: bool
     response_code: int
+    timestamp: datetime.datetime = None
+
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.datetime.now()
 
 # --- Payload Generator ---
 
@@ -174,6 +193,10 @@ class XSSScanner:
         return False
 
     def generate_report(self):
+        self._print_terminal_report()
+        self._generate_html_report()
+
+    def _print_terminal_report(self):
         print("\n" + "="*60)
         print(f"SCAN REPORT FOR {self.target_url}")
         print("="*60)
@@ -193,6 +216,101 @@ class XSSScanner:
         
         print("\nTotal reflections found:", len(found_vulns))
         print("="*60)
+
+    def _generate_html_report(self):
+        filename = "xss_report.html"
+        print(f"\n[*] Generating HTML report: {filename}")
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>XSS Scan Report</title>
+            <style>
+                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f9; color: #333; }}
+                h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }}
+                .summary {{ background: #fff; padding: 15px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }}
+                table {{ width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+                th, td {{ padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }}
+                th {{ background-color: #3498db; color: white; }}
+                tr:hover {{ background-color: #f1f1f1; }}
+                .vuln-true {{ background-color: #e74c3c; color: white; font-weight: bold; padding: 3px 8px; border-radius: 3px; }}
+                .vuln-false {{ background-color: #27ae60; color: white; padding: 3px 8px; border-radius: 3px; }}
+                .context-desc {{ font-size: 0.85em; color: #666; font-style: italic; display: block; margin-top: 4px; }}
+                code {{ background-color: #eee; padding: 2px 5px; border-radius: 3px; font-family: 'Consolas', monospace; display: block; white-space: pre-wrap; word-break: break-all; }}
+            </style>
+        </head>
+        <body>
+            <h1>Reflected XSS Scan Report</h1>
+            
+            <div class="summary">
+                <h2>Scan Summary</h2>
+                <p><strong>Target:</strong> {self.target_url}</p>
+                <p><strong>Method:</strong> {self.method}</p>
+                <p><strong>Date:</strong> {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+                <p><strong>Total Requests:</strong> {len(self.results)}</p>
+                <p><strong>Vulnerabilities Found:</strong> {len([r for r in self.results if r.reflected])}</p>
+            </div>
+
+            <h2>Detailed Results</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Result</th>
+                        <th>Parameter</th>
+                        <th>Context & Thought Process</th>
+                        <th>Payload Injected</th>
+                        <th>Status Code</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+
+        for r in self.results:
+            # Skip non-reflected ones in main table to keep report clean? 
+            # Let's show only reflected ones or all? 
+            # Showing only reflected is usually better for reports, but listing all shows coverage.
+            # Let's show Reflected first, then maybe a summary of others. 
+            # For this assignment, let's list everything but highlight vulnerables.
+            
+            status_class = "vuln-true" if r.reflected else "vuln-false"
+            status_text = "REFLECTED" if r.reflected else "Blocked/Safe"
+            
+            # If not reflected, we might want to hide it or make the row simpler. 
+            # Let's just include reflected ones to keep the report useful as a vulnerability report.
+            if not r.reflected:
+                continue
+
+            html_content += f"""
+                    <tr>
+                        <td><span class="{status_class}">{status_text}</span></td>
+                        <td><strong>{html.escape(r.parameter)}</strong></td>
+                        <td>
+                            <strong>{r.context.value}</strong>
+                            <span class="context-desc">{r.context.description()}</span>
+                        </td>
+                        <td><code>{html.escape(r.payload)}</code></td>
+                        <td>{r.response_code}</td>
+                    </tr>
+            """
+
+        html_content += """
+                </tbody>
+            </table>
+            
+            <p style="text-align: center; margin-top: 30px; color: #777;">Generated by Python XSS Scanner</p>
+        </body>
+        </html>
+        """
+        
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(html_content)
+            print(f"[*] HTML Report successfully written to {filename}")
+        except Exception as e:
+            print(f"[!] Failed to write HTML report: {e}")
 
 # --- Main Execution ---
 
