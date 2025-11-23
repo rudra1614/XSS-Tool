@@ -16,7 +16,6 @@ Table of Contents
 - Results
 - Code quality & design choices
 - Contributing
-- License
 
 1. Project assumptions
 
@@ -98,10 +97,3 @@ Outputs
 
 Contributions, bug reports, and pull requests are welcome. If you add new payloads or features, please include tests or example usage where appropriate.
 
-8. License
-
-Include a license file in the repository if you intend to relicense or distribute. This project does not include a license by default; add one (for example, MIT) if you want permissive reuse.
-
-Security / Responsible disclosure
-
-If you find a security issue in this tool or its use, please follow responsible disclosure practices and contact the repository owner privately with details.
