@@ -89,13 +89,13 @@ class PayloadGenerator:
                 
                 if response.text:
                     ai_payloads = [line.strip() for line in response.text.split('\n') if line.strip()]
-                    # Determine where to store them
+                   
                     if context in self.custom_payloads:
                         self.custom_payloads[context].extend(ai_payloads)
                         
             except Exception as e:
                 print(f"    [!] AI Generation failed for {context.value}: {e}")
-                time.sleep(1) # Short backoff
+                time.sleep(1) 
 
     def get_payloads(self) -> Dict[InjectionContext, List[str]]:
         """Returns merged dictionary of default and AI payloads."""
@@ -121,7 +121,7 @@ class PayloadGenerator:
             ]
         }
 
-        # Merge dynamic lists
+      
         for ctx, custom_list in self.custom_payloads.items():
             if ctx in payloads:
                 payloads[ctx].extend(custom_list)
@@ -187,7 +187,7 @@ class XSSScanner:
             raise ValueError("Unsupported method")
 
     def _analyze_response(self, response, payload: str) -> bool:
-        # Basic check for reflection
+        #  check for reflection
         if payload in response.text:
             return True
         return False
@@ -272,7 +272,7 @@ class XSSScanner:
             status_class = "vuln-true" if r.reflected else "vuln-false"
             status_text = "REFLECTED" if r.reflected else "Blocked/Safe"
             
-            # Condition removed: Now showing ALL payloads regardless of result
+            
             html_content += f"""
                     <tr>
                         <td><span class="{status_class}">{status_text}</span></td>
