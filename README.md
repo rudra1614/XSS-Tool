@@ -1,99 +1,179 @@
-AI-Enhanced Reflected XSS Scanner
+<div align="center">
 
-A context-aware Reflected Cross-Site Scripting (XSS) scanner written in Python. This tool combines a curated set of static "golden" payloads with optional dynamic, AI-generated payloads (via Google Gemini) to improve coverage when testing input reflection vulnerabilities.
+# 🛡️ AI-Enhanced Reflected XSS Scanner
 
-Disclaimer
+**A context-aware Reflected Cross-Site Scripting (XSS) scanner powered by Python and Google Gemini AI.**
 
-This tool is intended for educational purposes and for authorized security testing only. Do not use this tool against systems for which you do not have explicit written permission.
+[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Google Gemini](https://img.shields.io/badge/Google%20Gemini-AI%20Powered-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
+[![License](https://img.shields.io/badge/License-Educational%20Use-green?style=for-the-badge)](LICENSE)
+[![Security](https://img.shields.io/badge/Security-Authorized%20Testing%20Only-red?style=for-the-badge&logo=shield&logoColor=white)]()
 
-Table of Contents
+---
 
-- Project assumptions
-- Payload generation strategy
-- Reflection detection
-- Setup & usage
-- Running the scanner
-- Results
-- Code quality & design choices
-- Contributing
+*Combines a curated library of static "golden" payloads with optional AI-generated vectors to maximize coverage when testing input reflection vulnerabilities.*
 
-1. Project assumptions
+</div>
 
-- Parameter knowledge: The user provides a list of parameters to test (for example: q, id). The scanner does not crawl sites to discover parameters automatically.
-- Reflection is the primary indicator: If an injected payload is returned in the HTTP response body, it is flagged as a potential reflected XSS. The scanner does not execute a full browser (headless) to validate JavaScript execution.
-- HTTP status: A 200 OK response is required to consider a reflection successful. 403/500 responses are recorded but not treated as successful exploitations.
+---
 
-2. Payload generation strategy (PayloadGenerator)
+> [!WARNING]
+> **Disclaimer:** This tool is intended for **educational purposes** and **authorized security testing only**.
+> Do not use this tool against any system for which you do not have **explicit written permission**.
 
-The PayloadGenerator uses a hybrid approach:
+---
 
-A. Context awareness
+## 📋 Table of Contents
 
-The scanner classifies injection points into specific InjectionContexts and tailors payloads accordingly:
+| # | Section |
+|---|---------|
+| 1 | [✅ Project Assumptions](#1-project-assumptions) |
+| 2 | [⚙️ Payload Generation Strategy](#2-payload-generation-strategy) |
+| 3 | [🔍 Reflection Detection](#3-reflection-detection-approach) |
+| 4 | [🚀 Setup & Usage](#4-setup--usage) |
+| 5 | [▶️ Running the Scanner](#5-running-the-scanner) |
+| 6 | [🏗️ Code Quality & Design Choices](#6-code-quality--design-choices) |
+| 7 | [🤝 Contributing](#7-contributing) |
 
-- TEXT_NODE: Injection into raw HTML (example: <div>[HERE]</div>). Strategy: inject full <script> or <img> tags.
-- ATTRIBUTE_VALUE: Injection inside an attribute value (example: <input value="[HERE]">). Strategy: attempt to break out of quotes and append event handlers (e.g., "><img src=x onerror=alert(1)>).
-- ATTRIBUTE_NAME: Injection into the tag structure itself (example: <div [HERE]>). Strategy: inject event handlers or attributes directly (e.g., autofocus onfocus=alert(1)).
-- SCRIPT_TAG: Injection inside existing JavaScript. Strategy: break out of strings or comments (e.g., '\';alert(1);//').
+---
 
-B. AI integration (Gemini)
+## ✨ Features at a Glance
 
-If a Google Gemini API key is provided, the tool can request additional, live-generated payloads tailored to each context. The scanner requests a small number (default: 5) of unique vectors per context and merges them with the static payload list. This is optional — the scanner will fall back to the static payloads if the AI key or library is not available.
+- 🎯 **Context-aware payloads** — tailors injection vectors based on where user input is reflected
+- 🤖 **AI integration** — optionally calls Google Gemini to generate novel, context-specific payloads
+- 📄 **HTML report** — automatically produces an `xss_report.html` summary of all findings
+- 🔄 **Graceful degradation** — falls back to static payloads when no API key is available
+- 🐍 **Clean Python design** — type hints, enums, and modular architecture throughout
 
-3. Reflection detection approach
+---
 
-- Tokenization: Each payload includes a unique marker or fingerprint to make detection reliable.
-- Analysis: After sending requests, the scanner inspects the HTTP response body.
-- Verification: If the payload marker appears in response.text (and the response status is 200), the reflection is recorded as a potential reflected XSS.
+## 1. Project Assumptions
 
-Note: Detection indicates potential vulnerability. A successful exploit requires the browser to parse and execute the reflected input.
+| Assumption | Detail |
+|------------|--------|
+| **Parameter knowledge** | The user provides a list of parameters to test (e.g. `q`, `id`). The scanner does **not** crawl sites to discover parameters automatically. |
+| **Reflection as indicator** | If an injected payload appears in the HTTP response body, it is flagged as a potential reflected XSS. A full headless browser is **not** used to validate JS execution. |
+| **HTTP status** | Only `200 OK` responses are treated as successful. `403`/`500` responses are recorded but not counted as exploitations. |
 
-4. Setup & usage
+---
 
-Prerequisites
+## 2. Payload Generation Strategy
 
-- Python 3.8 or newer
-- (Optional) Google Gemini API key to enable AI payload generation
+The `PayloadGenerator` uses a **hybrid approach** combining static payloads with optional AI generation.
 
-Installation
+### 2a. Context Awareness
+
+The scanner classifies each injection point into one of four `InjectionContext` types:
+
+| Context | Example | Strategy |
+|---------|---------|----------|
+| `TEXT_NODE` | `<div>[HERE]</div>` | Inject full `<script>` or `<img>` tags |
+| `ATTRIBUTE_VALUE` | `<input value="[HERE]">` | Break out of quotes and append event handlers — e.g. `"><img src=x onerror=alert(1)>` |
+| `ATTRIBUTE_NAME` | `<div [HERE]>` | Inject event handlers or attributes directly — e.g. `autofocus onfocus=alert(1)` |
+| `SCRIPT_TAG` | Inside existing JS | Break out of strings or comments — e.g. `\';alert(1);//` |
+
+### 2b. AI Integration (Google Gemini)
+
+If a **Google Gemini API key** is supplied, the tool requests a small batch (default: **5**) of unique, live-generated vectors per context and merges them with the static payload list.
+
+> **Note:** AI integration is entirely optional — the scanner operates fully on static payloads when no key is provided.
+
+---
+
+## 3. Reflection Detection Approach
+
+```
+┌──────────────┐    inject     ┌─────────────┐    inspect    ┌──────────────┐
+│  Payload +   │ ──────────►  │   Target    │ ──────────►  │   Response   │
+│  Fingerprint │              │   Server    │              │    Body      │
+└──────────────┘              └─────────────┘              └──────┬───────┘
+                                                                   │
+                                              marker in body? ─────┤
+                                              status == 200?       │
+                                                                   ▼
+                                                          ✅ Potential XSS
+```
+
+| Step | Description |
+|------|-------------|
+| **Tokenization** | Each payload is assigned a unique fingerprint to make detection reliable |
+| **Analysis** | The scanner inspects the full HTTP response body for each fingerprint |
+| **Verification** | If the marker appears **and** the status is `200`, the reflection is recorded |
+
+> **Important:** Detection indicates *potential* vulnerability. A successful exploit requires the browser to parse and execute the reflected input.
+
+---
+
+## 4. Setup & Usage
+
+### Prerequisites
+
+- 🐍 **Python 3.8** or newer
+- 🔑 *(Optional)* Google Gemini API key — enables AI payload generation
+
+### Installation
 
 ```bash
-# clone the repository
+# 1. Clone the repository
 git clone https://github.com/rudra1614/XSS-Tool.git
 cd XSS-Tool
 
-# create and activate a venv
+# 2. Create and activate a virtual environment
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate        # Windows (Command Prompt): venv\Scripts\activate.bat
 
-# install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
 ```
 
-5. Running the scanner
+---
+
+## 5. Running the Scanner
 
 ```bash
 python3 Tool.py
 ```
 
-When prompted:
+When prompted, provide the following inputs:
 
-- Target URL: Provide the full URL (for example: http://localhost:8000/search.php)
-- API Key: Enter your Google Gemini API key to enable live AI payload generation, or press Enter to skip and use only the static payloads.
+| Prompt | Description |
+|--------|-------------|
+| **Target URL** | Full URL to scan — e.g. `http://localhost:8000/search.php` |
+| **API Key** | Google Gemini API key for AI payloads, or press **Enter** to use static payloads only |
 
-Outputs
+### Outputs
 
-- Real-time findings are printed to the terminal.
-- A report file (xss_report.html) is generated in the project folder with details of findings.
+| Output | Description |
+|--------|-------------|
+| **Terminal** | Real-time findings are printed as they are discovered |
+| **`xss_report.html`** | A full HTML report is generated in the project folder |
 
-6. Code quality & design choices
+---
 
-- Modularity: Scanning logic (XSSScanner) is separated from payload generation (PayloadGenerator), allowing payload sources to be swapped without changing scanner logic.
-- Type hints: Python type hints (List, Dict, Enum) are used for clarity and better tooling support.
-- Enums: An InjectionContext enum is used instead of raw strings to reduce typos and clarify intent.
-- Graceful degradation: If the google.generativeai library or API key is missing/invalid, the tool automatically falls back to static payloads without crashing.
+## 6. Code Quality & Design Choices
 
-7. Contributing
+| Principle | Implementation |
+|-----------|----------------|
+| **Modularity** | `XSSScanner` (scanning logic) is decoupled from `PayloadGenerator` (payload sourcing) — swap payload sources without touching scanner logic |
+| **Type hints** | Python type hints (`List`, `Dict`, `Enum`) are used throughout for clarity and better IDE/tooling support |
+| **Enums** | `InjectionContext` enum replaces raw strings to eliminate typos and clarify intent |
+| **Graceful degradation** | Missing `google.generativeai` library or invalid API key causes an automatic, silent fallback to static payloads — no crash |
 
-Contributions, bug reports, and pull requests are welcome. If you add new payloads or features, please include tests or example usage where appropriate.
+---
+
+## 7. Contributing
+
+Contributions, bug reports, and pull requests are **welcome and encouraged**! 🎉
+
+- 🐛 **Bug reports** — open an issue with a reproduction case
+- ✨ **New payloads** — submit a PR with a description of the context the payload targets
+- 🔧 **Feature improvements** — include tests or example usage where appropriate
+
+---
+
+<div align="center">
+
+*Built for learning and authorized testing · Use responsibly*
+
+</div>
 
